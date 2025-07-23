@@ -1,0 +1,106 @@
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader,random_split
+import torch
+import torch.nn as nn
+import copy
+import time
+import pandas as pd
+from Resnet import ResNet18
+
+def train_dataloader():
+    transform = transforms.Compose([transforms.Resize(224), transforms.ToTensor()])
+    train_all = datasets.FashionMNIST(root="./data",
+                                      train=True,
+                                      transform = transform,
+                                      download=True)
+    train_size, val_size = round(len(train_all)*0.8), round(len(train_all)*0.2)
+    train_data, val_data = random_split(train_all, [train_size, val_size])
+    train_dataloader = DataLoader(dataset=train_data,
+                                  shuffle=True,
+                                  batch_size=12,
+                                  num_workers=0)
+    val_dataloader = DataLoader(dataset=val_data,
+                                shuffle=True,
+                                batch_size=12,
+                                num_workers=0)
+    return train_dataloader, val_dataloader
+
+
+def train_process(model, train_dataloader, val_dataloader, num_epochs):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    criterion = nn.CrossEntropyLoss()
+    train_loss_all = []
+    train_acc_all = []
+    val_loss_all = []
+    val_acc_all = []
+    best_acc = 0.0
+    best_model_bts = copy.deepcopy(model.state_dict())
+    since = time.time()
+    for epoch in range(num_epochs):
+        print("第{:.0f}轮开始训练".format(epoch))
+        print("-"*10)
+        train_loss=0.0
+        train_acc=0.0
+        val_loss=0.0
+        val_acc=0.0
+        train_num=0
+        val_num=0
+        for step, (b_x, b_y) in enumerate(train_dataloader):
+            model.train()
+            b_x.to(device)
+            b_y.to(device)
+            output = model(b_x)
+            pre_lab = torch.argmax(output, dim=1)
+            loss = criterion(output, b_y)
+            optimizer.zero_grad()
+            loss.backwards()
+            optimizer.step()
+            train_loss += loss * b_x.size(0)
+            train_acc += torch.sum(pre_lab==b_y)
+            train_num += b_x.size(0)
+        with torch.no_grad():
+            for step, (b_x, b_y) in enumerate(val_dataloader):
+                model.eval()
+                b_x.to(device)
+                b_y.to(device)
+                output = model(b_x)
+                pre_lab = torch.argmax(output, dim=1)
+                loss = criterion(output, b_y)
+                val_loss += loss * b_x.size(0)
+                val_acc += torch.sum(pre_lab==b_y)
+                val_num += b_x.size(0)
+
+        train_loss_all.append(train_loss.double().item()/train_num)
+        train_acc_all.append(train_acc/train_num)
+        val_loss_all.append(val_loss.double().item()/val_num)
+        val_acc_all.append(val_acc/val_num)
+
+        # 最优精度
+        if best_acc < val_acc_all[-1]:
+            best_acc = val_acc_all[-1]
+            print("最优精度为{:.4f}".format(best_acc))
+
+        # 一轮耗时
+        time_use = time.time()-since
+        print("第{:.0f}轮训练总耗时{:.0f}m{:.2f}s".format(epoch, time_use//60, time_use%60))
+
+    # 保存最优模型
+    model.load_state_dict(best_model_bts)
+    model.save(best_model_bts, "./best.pt")
+    # 保存总表
+    train_process = pd.DataFrame(data={"epoch": range(num_epochs+1),
+                                       "train_loss_all": train_loss_all,
+                                       "train_acc_all": train_acc_all,
+                                       "val_loss_all": val_loss_all,
+                                       "val_acc_all": val_acc_all,})
+
+    return train_process
+
+
+
+
+
+
+
